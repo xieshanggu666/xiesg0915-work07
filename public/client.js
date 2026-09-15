@@ -60,6 +60,17 @@
       const lib = globalThis.WTShares;
       if (lib) localStorage.setItem('wt_pack_shares', JSON.stringify(lib.normalizeLocal(v)));
     },
+    // 我发布到交流广场的词包（本机映射，见 plaza.js）：{id,packId,name,updatedAt}[]。
+    // 服务端才是权威：进词包页时用 myPlaza 对账（跨设备发布的也会出现，已下架的消失）。
+    // 经 globalThis 引用：旧测试桩可能未加载 plaza.js，生产环境 <script> 总会先于本文件。
+    get plazaMine() {
+      const lib = globalThis.WTPlaza;
+      return lib ? lib.normalizeLocal(JSON.parse(localStorage.getItem('wt_plaza_mine') || '[]')) : [];
+    },
+    set plazaMine(v) {
+      const lib = globalThis.WTPlaza;
+      if (lib) localStorage.setItem('wt_plaza_mine', JSON.stringify(lib.normalizeLocal(v)));
+    },
   };
 
   let ws = null, state = null, prevState = null;
@@ -96,6 +107,7 @@
     'createRoom', 'joinRoom', 'spectate', 'setRules', 'setWordPack', 'startGame',
     'play', 'reinforce', 'endTurn', 'challenge', 'resolve',
     'sharePack', 'unsharePack', 'importShare',
+    'plazaPublish', 'plazaUnpublish', 'plazaSubscribe',
   ]);
 
   function connect() {
@@ -228,6 +240,21 @@
         break;
       case 'myShares':
         onMyShares(msg.shares);
+        break;
+      case 'plazaList':
+        onPlazaList(msg);
+        break;
+      case 'plazaPack':
+        onPlazaPack(msg);
+        break;
+      case 'plazaPublished':
+        onPlazaPublished(msg);
+        break;
+      case 'plazaUnpublished':
+        onPlazaUnpublished(msg.id);
+        break;
+      case 'myPlaza':
+        onMyPlaza(msg.packs);
         break;
       case 'replay':
         replayFrames = msg.frames; replayIdx = 0;
@@ -1708,6 +1735,7 @@
     closePackEditor();
     showScreen('packs');
     requestMyShares();
+    requestMyPlaza();
     renderPacks();
   }
 
@@ -1727,14 +1755,19 @@
     if ($('screen-packs').classList.contains('hidden')) return;
     const packs = store.packs;
     const myShares = store.packShares;
+    const plazaLib = globalThis.WTPlaza || null; // 旧测试桩可能未加载 plaza.js
+    const myPlaza = plazaLib ? store.plazaMine : [];
     $('pack-empty').classList.toggle('hidden', packs.length > 0);
     $('pack-list').innerHTML = packs.map(p => {
       const sh = WTShares.findLocalByPackId(myShares, p.id);
+      const pub = plazaLib ? plazaLib.findLocalByPackId(myPlaza, p.id) : null;
       return `
       <li>
         <div>
           <div class="pl-title">${esc(p.name)} <span class="badge shield">${p.words.length} 词</span>${
             sh ? `<span class="badge share-badge" data-pack-code="${sh.code}">分享码 ${WTShares.formatCode(sh.code)}</span>` : ''
+          }${
+            pub ? '<span class="badge plaza-badge">已发布到广场</span>' : ''
           }</div>
           <div class="pl-sub">${p.theme ? esc(p.theme) : '（无主题说明）'}</div>
           <div class="pl-sub">候选词：${p.words.slice(0, 8).map(esc).join('、')}${p.words.length > 8 ? ' …' : ''}</div>
@@ -1742,6 +1775,8 @@
         <div class="row">
           <button class="link" data-pack-edit="${p.id}">编辑</button>
           <button class="link" data-pack-share="${p.id}">${sh ? '分享码' : '分享'}</button>
+          ${plazaLib ? `<button class="link" data-pack-pub="${p.id}">${pub ? '更新发布' : '发布到广场'}</button>` : ''}
+          ${pub ? `<button class="link danger-link" data-pack-unpub="${pub.id}">下架</button>` : ''}
           <button class="link danger-link" data-pack-del="${p.id}">删除</button>
         </div>
       </li>`;
@@ -1752,14 +1787,26 @@
     $('pack-list').querySelectorAll('[data-pack-share]').forEach(btn => {
       btn.onclick = () => onPackShareClick(btn.dataset.packShare);
     });
+    $('pack-list').querySelectorAll('[data-pack-pub]').forEach(btn => {
+      btn.onclick = () => {
+        const p = WTPacks.find(store.packs, btn.dataset.packPub);
+        if (p) publishPackToPlaza(p);
+      };
+    });
+    $('pack-list').querySelectorAll('[data-pack-unpub]').forEach(btn => {
+      btn.onclick = () => confirmPlazaUnpublish(btn.dataset.packUnpub);
+    });
     $('pack-list').querySelectorAll('[data-pack-del]').forEach(btn => {
       btn.onclick = () => {
         const p = WTPacks.find(store.packs, btn.dataset.packDel);
         if (!p) return;
         const shared = !!WTShares.findLocalByPackId(store.packShares, p.id);
-        const msg = shared
-          ? `删除词包「${p.name}」？已选用它的房间不受影响（房间里是快照）。\n该词包的分享仍对朋友有效，可在页面下方「其他设备上分享的词包」中取消。`
-          : `删除词包「${p.name}」？已选用它的房间不受影响（房间里是快照）。`;
+        const published = !!(plazaLib && plazaLib.findLocalByPackId(store.plazaMine, p.id));
+        const extra = [
+          shared ? '\n该词包的分享仍对朋友有效，可在页面下方「其他设备上分享的词包」中取消。' : '',
+          published ? '\n该词包仍在交流广场上，可在页面下方「其他设备上发布的词包」中下架。' : '',
+        ].join('');
+        const msg = `删除词包「${p.name}」？已选用它的房间不受影响（房间里是快照）。${extra}`;
         if (!confirm(msg)) return;
         store.packs = WTPacks.remove(store.packs, p.id);
         if (editingPackId === p.id) closePackEditor();
@@ -1768,6 +1815,7 @@
       };
     });
     renderSharedOrphans();
+    renderPlazaOrphans();
   }
 
   // 其他设备分享、或本机词包已删除但服务端仍有效的码：单独列出以便取消。
@@ -1956,6 +2004,219 @@
   $('pack-import-code').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') $('btn-pack-import').onclick();
   });
+
+  // ---------- 交流广场 ----------
+  // 发布/下架在「我的词包」操作；浏览/搜索/订阅在广场页。订阅成功后词包存进本机
+  // 词包列表（带 plazaId 来源标记防重复订阅），建房时与自建词包一样在大厅选用。
+
+  let plazaPacks = null;    // null=尚未拉取/加载中；[]=空广场
+  let plazaQuery = '';      // 搜索词（纯前端过滤）
+  let plazaTheme = '';      // 主题筛选（''=全部）
+  let plazaSort = 'hot';    // hot | new
+  let plazaThemeSig = '';   // 主题下拉选项签名：广场数据变化时才重建，避免打字时下拉被重置
+
+  // 只读请求：socket 不可用时不发送并提示（与排行榜同一处理）
+  function askPlaza() {
+    plazaPacks = null;
+    if (!send({ type: 'plazaList', sort: plazaSort, pidSecret: store.pidSecret })) {
+      toast('正在连接服务器，广场稍后再试');
+    }
+    renderPlaza();
+  }
+
+  function openPlaza() {
+    showScreen('plaza');
+    askPlaza();
+  }
+
+  function onPlazaList(msg) {
+    plazaSort = msg.sort === 'new' ? 'new' : 'hot';
+    plazaPacks = Array.isArray(msg.packs) ? msg.packs : [];
+    renderPlaza();
+  }
+
+  // 主题筛选下拉：选项来自当前广场数据里出现过的主题（热门主题在前）；
+  // 当前选中的主题随词包下架消失时回退到"全部主题"。
+  function renderPlazaThemeOptions() {
+    const themes = WTPlaza.themesOf(plazaPacks || []);
+    const sig = JSON.stringify(themes);
+    if (sig === plazaThemeSig) return;
+    plazaThemeSig = sig;
+    const sel = $('plaza-theme-filter');
+    sel.innerHTML = '<option value="">全部主题</option>' +
+      themes.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    sel.value = themes.includes(plazaTheme) ? plazaTheme : '';
+    plazaTheme = sel.value;
+  }
+
+  function renderPlaza() {
+    if ($('screen-plaza').classList.contains('hidden')) return;
+    for (const [key, id] of [['hot', 'btn-plaza-sort-hot'], ['new', 'btn-plaza-sort-new']]) {
+      $(id).classList.toggle('primary', key === plazaSort);
+    }
+    const listEl = $('plaza-list');
+    if (plazaPacks === null) {
+      listEl.innerHTML = '<p class="hint">广场加载中…</p>';
+      $('plaza-empty').classList.add('hidden');
+      $('plaza-stats').textContent = '';
+      return;
+    }
+    renderPlazaThemeOptions();
+    const filtered = WTPlaza.sortPacks(
+      WTPlaza.filterPacks(plazaPacks, { keyword: plazaQuery, theme: plazaTheme }), plazaSort);
+    const filtering = !!(plazaQuery.trim() || plazaTheme);
+    $('plaza-stats').textContent = plazaPacks.length
+      ? `共 ${plazaPacks.length} 个词包${filtering ? ` · 筛选出 ${filtered.length} 个` : ''}`
+      : '';
+    $('plaza-empty').classList.toggle('hidden', plazaPacks.length > 0);
+    if (!filtered.length) {
+      listEl.innerHTML = plazaPacks.length
+        ? `<p class="hint">没有符合条件的词包${plazaQuery.trim() ? `（搜索：${esc(plazaQuery.trim())}）` : ''}。</p>` : '';
+      return;
+    }
+    listEl.innerHTML = filtered.map(item => {
+      const subscribed = store.packs.some(p => p.plazaId === item.id);
+      const more = item.wordCount > item.preview.length ? ' …' : '';
+      return `
+      <li>
+        <div>
+          <div class="pl-title">${esc(item.name)}
+            <span class="badge shield">${item.wordCount} 词</span>
+            <span class="badge hot-badge">🔥 ${item.subscribers} 人订阅</span>
+            ${item.mine ? '<span class="badge plaza-mine">我发布的</span>' : ''}
+          </div>
+          <div class="pl-sub">${item.theme ? esc(item.theme) : '（无主题说明）'}</div>
+          <div class="pl-sub">候选词：${item.preview.map(esc).join('、')}${more}</div>
+          <div class="pl-sub">${item.author ? `发布者：${esc(item.author)} · ` : ''}更新于 ${fmtDate(item.updatedAt)}</div>
+        </div>
+        <div class="row">
+          ${item.mine
+            ? `<button class="link danger-link" data-plaza-unpub="${item.id}">下架</button>`
+            : subscribed
+              ? '<span class="badge plaza-subbed">已订阅</span>'
+              : `<button class="link" data-plaza-sub="${item.id}">订阅到本机</button>`}
+        </div>
+      </li>`;
+    }).join('');
+    listEl.querySelectorAll('[data-plaza-sub]').forEach(btn => {
+      btn.onclick = () => send({ type: 'plazaSubscribe', id: btn.dataset.plazaSub, pidSecret: store.pidSecret });
+    });
+    listEl.querySelectorAll('[data-plaza-unpub]').forEach(btn => {
+      btn.onclick = () => confirmPlazaUnpublish(btn.dataset.plazaUnpub);
+    });
+  }
+
+  // 订阅成功：词包快照存进本机词包（与凭码导入同一套去重：来源标记 + 内容判重）
+  function onPlazaPack(msg) {
+    const pack = msg.pack;
+    if (!pack || !Array.isArray(pack.words)) return toast('订阅的词包数据无效');
+    // 列表里的热度就地刷新（不等下次拉取）
+    const item = (plazaPacks || []).find(p => p.id === msg.id);
+    if (item && Number.isInteger(msg.subscribers)) item.subscribers = msg.subscribers;
+    // 去重 1：同一广场词包已订阅过，直接提示，不产生重复副本
+    const existing = store.packs.find(p => p.plazaId === msg.id);
+    if (existing) {
+      toast(`这个词包已经在你的列表里：「${existing.name}」`);
+      renderPlaza();
+      return;
+    }
+    // 去重 2：名称与候选词完全相同（如作者就是自己的另一份副本）也不重复订阅
+    const dupContent = store.packs.find(p =>
+      p.name === pack.name && JSON.stringify(p.words) === JSON.stringify(pack.words));
+    if (dupContent) {
+      toast(`你已经有相同的词包「${dupContent.name}」了`);
+      renderPlaza();
+      return;
+    }
+    const { packs, error } = WTPacks.upsert(store.packs, {
+      id: WTPacks.makeId(),
+      name: pack.name, theme: pack.theme, words: pack.words,
+      plazaId: String(msg.id || ''), subscribedAt: Date.now(), updatedAt: Date.now(),
+    });
+    if (error) return toast(error);
+    store.packs = packs;
+    toast(`已订阅「${pack.name}」到本机，建房时可在大厅选用`);
+    renderPlaza();
+  }
+
+  // 发布到广场（词包页「发布到广场 / 更新发布」）：一键发布，同一词包重复发布沿用原条目
+  function publishPackToPlaza(p) {
+    // 离线时 send 会统一提示"正在重连"，这里不额外弹"正在发布"，避免两条矛盾提示
+    if (!send({
+      type: 'plazaPublish', pidSecret: store.pidSecret, author: store.name,
+      pack: { id: p.id, name: p.name, theme: p.theme, words: p.words },
+    })) return;
+    toast('正在发布到广场…');
+  }
+
+  // 服务端确认发布成功（新建或更新）：记下本机映射，词包行出现"已发布"徽标
+  function onPlazaPublished(msg) {
+    if (!WTPlaza.isValidPlazaId(msg.id)) return;
+    store.plazaMine = WTPlaza.upsertLocal(store.plazaMine,
+      { id: msg.id, packId: msg.packId, name: msg.name, updatedAt: msg.updatedAt || Date.now() });
+    toast(msg.republished ? '广场上的词包已更新为最新内容' : `已发布到广场，大家都能搜索订阅「${msg.name}」了`);
+    renderPacks();
+  }
+
+  function confirmPlazaUnpublish(id) {
+    if (!WTPlaza.isValidPlazaId(id)) return toast('广场条目无效');
+    const mine = store.plazaMine.find(m => m.id === id);
+    const item = (plazaPacks || []).find(p => p.id === id);
+    const name = (mine && mine.name) || (item && item.name) || '';
+    if (!confirm(`把${name ? `「${name}」` : '这个词包'}从交流广场下架？下架后其他人无法再搜索和订阅它（已订阅到本机的不受影响）。`)) return;
+    send({ type: 'plazaUnpublish', pidSecret: store.pidSecret, id });
+  }
+
+  function onPlazaUnpublished(id) {
+    store.plazaMine = WTPlaza.removeLocal(store.plazaMine, String(id || ''));
+    if (plazaPacks) plazaPacks = plazaPacks.filter(p => p.id !== id);
+    renderPacks();
+    renderPlaza();
+    toast('已从交流广场下架');
+  }
+
+  // 与服务端对账我的广场发布：以服务端列表为准（跨设备发布的也出现、已下架的消失）。
+  function requestMyPlaza() {
+    send({ type: 'myPlaza', pidSecret: store.pidSecret });
+    if (!$('screen-packs').classList.contains('hidden')) renderPacks();
+  }
+
+  function onMyPlaza(remote) {
+    store.plazaMine = WTPlaza.reconcileLocal(store.plazaMine, remote);
+    renderPacks();
+  }
+
+  // 其他设备发布、或本机词包已删除但服务端仍在广场上的条目：单独列出以便下架。
+  function renderPlazaOrphans() {
+    const plazaLib = globalThis.WTPlaza;
+    const box = $('plaza-orphans');
+    if (!plazaLib) { box.classList.add('hidden'); return; }
+    const packIds = new Set(store.packs.map(p => p.id));
+    const orphans = store.plazaMine.filter(m => !packIds.has(m.packId));
+    box.classList.toggle('hidden', orphans.length === 0);
+    if (!orphans.length) return;
+    $('plaza-orphan-list').innerHTML = orphans.map(m => `
+      <li>
+        <div>
+          <div class="pl-title">${esc(m.name || '未命名词包')} <span class="badge plaza-badge">广场上</span></div>
+          <div class="pl-sub">本机已无此词包，发布仍在交流广场上</div>
+        </div>
+        <div class="row">
+          <button class="link danger-link" data-plaza-orphan-unpub="${m.id}">下架</button>
+        </div>
+      </li>`).join('');
+    $('plaza-orphan-list').querySelectorAll('[data-plaza-orphan-unpub]').forEach(btn => {
+      btn.onclick = () => confirmPlazaUnpublish(btn.dataset.plazaOrphanUnpub);
+    });
+  }
+
+  $('btn-plaza-home').onclick = openPlaza;
+  $('btn-plaza-back').onclick = () => showScreen('home');
+  $('btn-plaza-sort-hot').onclick = () => { plazaSort = 'hot'; renderPlaza(); };
+  $('btn-plaza-sort-new').onclick = () => { plazaSort = 'new'; renderPlaza(); };
+  // 搜索与主题筛选都是纯前端过滤已拉取的列表，不重发请求
+  $('plaza-search').addEventListener('input', (e) => { plazaQuery = e.target.value || ''; renderPlaza(); });
+  $('plaza-theme-filter').onchange = (e) => { plazaTheme = e.target.value || ''; renderPlaza(); };
 
   function clearPackErrors() {
     for (const id of ['err-pack-name', 'err-pack-theme', 'err-pack-words', 'err-pack-general']) {

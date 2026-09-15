@@ -8,6 +8,7 @@ const { WebSocketServer } = require('ws');
 const game = require('./game');
 const seasonLib = require('./season');
 const sharesLib = require('./public/shares');
+const plazaLib = require('./public/plaza');
 
 const PORT = process.env.PORT || 8080;
 const DATA_DIR = path.join(__dirname, 'data');
@@ -25,6 +26,12 @@ const SEASON_FILE = process.env.WT_SEASON_FILE
 const SHARES_FILE = process.env.WT_SHARES_FILE
   ? path.resolve(process.env.WT_SHARES_FILE)
   : path.join(DATA_DIR, 'shares.json');
+// 交流广场单独落盘：{ [广场id]: { id,pid,packId,author,pack 快照,subs,publishedAt,updatedAt } }。
+// 与房间/赛季/分享码解耦——广场条目不依赖任何对局存在，作者下架后立即从广场消失；
+// 测试可用 WT_PLAZA_FILE 指向临时文件。
+const PLAZA_FILE = process.env.WT_PLAZA_FILE
+  ? path.resolve(process.env.WT_PLAZA_FILE)
+  : path.join(DATA_DIR, 'plaza.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // ---------- 赛季战绩存储 ----------
@@ -97,6 +104,39 @@ function flushShares() {
     fs.mkdirSync(path.dirname(SHARES_FILE), { recursive: true });
     fs.writeFileSync(SHARES_FILE, JSON.stringify(shareStore));
   } catch (e) { console.error('词包分享保存失败', e); }
+}
+
+// ---------- 交流广场存储 ----------
+// 广场与房间/赛季/分享码完全解耦：作者把本机词包快照发布到这里，
+// 任何人浏览/搜索/订阅；作者（同一 pidSecret 派生出的 pid）可随时下架。
+let plazaStore = plazaLib.emptyPlaza();
+
+function loadPlaza() {
+  try {
+    plazaStore = plazaLib.normalizePlaza(
+      JSON.parse(fs.readFileSync(PLAZA_FILE, 'utf8')));
+    console.log(`已恢复交流广场：${Object.keys(plazaStore.packs).length} 个词包`);
+  } catch { /* 首次启动或数据损坏，从空广场开始 */ }
+}
+
+let plazaSaveTimer = null;
+function savePlaza() {
+  clearTimeout(plazaSaveTimer);
+  plazaSaveTimer = setTimeout(() => {
+    try {
+      fs.mkdirSync(path.dirname(PLAZA_FILE), { recursive: true });
+      fs.writeFileSync(PLAZA_FILE, JSON.stringify(plazaStore));
+    } catch (e) { console.error('交流广场保存失败', e); }
+  }, 300);
+}
+
+// 停服前立即落盘（避免最后一次发布/订阅还在防抖队列里）
+function flushPlaza() {
+  clearTimeout(plazaSaveTimer);
+  try {
+    fs.mkdirSync(path.dirname(PLAZA_FILE), { recursive: true });
+    fs.writeFileSync(PLAZA_FILE, JSON.stringify(plazaStore));
+  } catch (e) { console.error('交流广场保存失败', e); }
 }
 
 // ---------- 房间存储 ----------
@@ -320,6 +360,11 @@ function makeShareCode() {
   const { CODE_LEN, CODE_ALPHABET } = sharesLib;
   return Array.from({ length: CODE_LEN },
     () => CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)]).join('');
+}
+
+// 广场条目 id：pz_ + 12 位十六进制，撞 id 由 plazaLib.publish 检测后重试
+function makePlazaId() {
+  return `pz_${crypto.randomBytes(6).toString('hex')}`;
 }
 
 function issueToken(roomCode, playerId, spectator = false) {
@@ -558,6 +603,75 @@ const handlers = {
     }
   },
 
+  // ---------- 交流广场 ----------
+
+  // 发布到广场：作者把本机词包快照公开到广场（同一词包重复发布沿用原条目、更新快照，
+  // 订阅数保留）。身份与赛季/分享同一道凭据：只认密钥派生出的 pid。
+  plazaPublish(ws, ctx, msg) {
+    const { pid } = seasonLib.resolvePid(msg);
+    if (!pid) return sendErr(ws, '需要有效的本机身份才能发布到广场', 'plazaPublish');
+    const cleaned = game.sanitizeWordPack(msg.pack);
+    if (typeof cleaned === 'string') return sendErr(ws, cleaned, 'plazaPublish');
+    const result = plazaLib.publish(plazaStore, {
+      pid, packId: cleaned.id, pack: cleaned, author: msg.author, generate: makePlazaId,
+    });
+    if (result.error) return sendErr(ws, result.error, 'plazaPublish');
+    savePlaza();
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({
+        type: 'plazaPublished', id: result.id, packId: cleaned.id,
+        name: cleaned.name, updatedAt: result.updatedAt, republished: result.republished,
+      }));
+    }
+  },
+
+  // 下架：只有发布者本人（同一 pid）能撤下；成功后该词包立即从广场消失，
+  // 已订阅到别人本机的副本不受影响。
+  plazaUnpublish(ws, ctx, msg) {
+    const { pid } = seasonLib.resolvePid(msg);
+    if (!pid) return sendErr(ws, '需要有效的本机身份才能下架', 'plazaUnpublish');
+    const ok = plazaLib.unpublish(plazaStore, msg.id, pid);
+    if (!ok) return sendErr(ws, '广场上没有这个词包，或你不是发布者', 'plazaUnpublish');
+    savePlaza();
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'plazaUnpublished', id: String(msg.id || '') }));
+    }
+  },
+
+  // 广场列表（公开只读，无需加入任何房间）：按热度/最新排序的摘要（含候选词预览，
+  // 不回全文）。客户端随请求带上本机密钥，服务端派生 myPid 用于标出"我发布的"，
+  // 客户端据此在自己的条目上显示下架入口。
+  plazaList(ws, ctx, msg) {
+    const sort = msg.sort === 'new' ? 'new' : 'hot';
+    const { pid } = seasonLib.resolvePid(msg);
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'plazaList', sort,
+        packs: plazaLib.summaries(plazaStore, { myPid: pid, sort }) }));
+    }
+  },
+
+  // 订阅：公开端点；返回词包快照供客户端存进本机词包（建房时与自建词包一样选用）。
+  // 同一身份只计一次热度；无有效身份也能拿到词包，只是不计数。
+  plazaSubscribe(ws, ctx, msg) {
+    const { pid } = seasonLib.resolvePid(msg);
+    const result = plazaLib.subscribe(plazaStore, msg.id, pid, Date.now());
+    if (result.error) return sendErr(ws, result.error, 'plazaSubscribe');
+    if (result.counted) savePlaza();
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'plazaPack', id: result.id,
+        pack: { id: result.packId, ...result.pack }, subscribers: result.subscribers }));
+    }
+  },
+
+  // 我的广场发布列表：客户端进入「我的词包」时拉取并与本机映射对账，
+  // 跨设备发布的词包也能看到/下架；服务端已下架的条目不返回，客户端据此清掉本机残留。
+  myPlaza(ws, ctx, msg) {
+    const { pid } = seasonLib.resolvePid(msg);
+    if (ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'myPlaza', packs: pid ? plazaLib.listByOwner(plazaStore, pid) : [] }));
+    }
+  },
+
   startGame(ws, ctx) {
     const room = ctxRoom(ctx);
     if (!room) return;
@@ -735,6 +849,7 @@ function startServer(port = PORT) {
     loadSeason();
     loadRooms();
     loadShares();
+    loadPlaza();
     scheduleRoomPruning();
     attachWebSocketServer();
     server.listen(port, () => {
@@ -749,6 +864,7 @@ function stopServer() {
   clearTimeout(saveTimer);
   clearTimeout(seasonSaveTimer);
   clearTimeout(sharesSaveTimer);
+  clearTimeout(plazaSaveTimer);
   for (const t of turnTimers.values()) clearTimeout(t);
   for (const t of spectatorPruneTimers.values()) clearTimeout(t);
   if (roomPruneTimer) clearInterval(roomPruneTimer);
@@ -756,6 +872,7 @@ function stopServer() {
   spectatorPruneTimers.clear();
   flushSeason(); // 最后一局战绩可能还在防抖队列里，停服前立即落盘
   flushShares(); // 最后一个分享同理
+  flushPlaza();  // 最后一次广场发布/订阅同理
   const wss = wssRef.current;
   wssRef.current = null;
   return new Promise((resolve) => {

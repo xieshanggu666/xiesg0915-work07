@@ -340,6 +340,16 @@ button.danger-link { border: none; background: none; color: var(--danger); paddi
 .shared-h-title { margin: 18px 0 4px; font-size: 16px; }
 #dlg-share .danger-link { margin-left: auto; }
 
+/* 交流广场 */
+.badge.plaza-badge { color: #1e8e4f; border-color: #1e8e4f; }
+.badge.hot-badge { color: #b06a00; border-color: #e0a53d; }
+.badge.plaza-mine { color: var(--accent); border-color: var(--accent); }
+.badge.plaza-subbed { color: #1e8e4f; border-color: #1e8e4f; }
+.plaza-toolbar .row { align-items: center; }
+#plaza-search { flex: 1; min-width: 160px; margin-top: 0; }
+#plaza-theme-filter { width: auto; min-width: 140px; margin-top: 0; }
+.plaza-stats { margin-left: auto; }
+
 /* 复习模式 */.review-card { padding: 28px 22px; }
 .review-front { text-align: center; }
 .review-word { font-size: 34px; font-weight: 700; letter-spacing: 2px; margin: 10px 0 14px; }

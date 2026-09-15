@@ -26,9 +26,16 @@
     <div class="card practice-entry">
       <div>
         <h3>我的词包 <span class="badge shield">本机</span></h3>
-        <p class="hint">围绕一个主题准备起始词候选（如「海洋」「校园」）。建房后房主可在大厅选用词包，所有人开局前都能看到主题与候选词，开局从中不重复抽取起始词。点分享生成分享码，朋友凭码就能导入。</p>
+        <p class="hint">围绕一个主题准备起始词候选（如「海洋」「校园」）。建房后房主可在大厅选用词包，所有人开局前都能看到主题与候选词，开局从中不重复抽取起始词。点分享生成分享码，朋友凭码就能导入；也可以一键发布到交流广场，让所有人订阅。</p>
       </div>
       <button id="btn-packs-home" class="primary">我的词包</button>
+    </div>
+    <div class="card practice-entry">
+      <div>
+        <h3>交流广场 <span class="badge shield">公开</span></h3>
+        <p class="hint">逛逛大家发布的主题词包：按主题浏览、搜索、按热度排序，看到喜欢的一键订阅到本机，建房时就能选这套词包开局。你的发布随时可以下架。</p>
+      </div>
+      <button id="btn-plaza-home" class="primary">逛逛广场</button>
     </div>
     <div class="card practice-entry">
       <div>
@@ -62,12 +69,12 @@
     </div>
   </section>
 
-  <!-- 我的词包：创建 / 编辑 / 删除 / 分享 / 凭码导入 -->
+  <!-- 我的词包：创建 / 编辑 / 删除 / 分享 / 发布广场 / 凭码导入 -->
   <section id="screen-packs" class="screen hidden">
     <header class="practice-head">
       <button id="btn-packs-back" class="link">← 返回首页</button>
       <h2>我的词包</h2>
-      <p class="hint">词包只保存在本浏览器。建房后在大厅选用，开局从候选词中不重复抽取起始词。点「分享」可生成分享码发给朋友，朋友凭码导入后建房时一样可选。</p>
+      <p class="hint">词包只保存在本浏览器。建房后在大厅选用，开局从候选词中不重复抽取起始词。点「分享」可生成分享码发给朋友，朋友凭码导入后建房时一样可选；点「发布到广场」则对所有人公开，大家在交流广场里都能搜索订阅。</p>
     </header>
     <div class="row">
       <button id="btn-pack-new" class="primary">新建词包</button>
@@ -105,6 +112,33 @@
       <p class="hint">这些分享码来自同一身份（如另一台设备），本机词包已删除但分享仍对朋友有效，可在此取消。</p>
       <ul id="shared-orphan-list" class="practice-list"></ul>
     </div>
+    <div id="plaza-orphans" class="hidden">
+      <h3 class="shared-h-title">其他设备上发布的词包</h3>
+      <p class="hint">这些广场发布来自同一身份（如另一台设备），本机词包已删除但发布仍在交流广场上，可在此下架。</p>
+      <ul id="plaza-orphan-list" class="practice-list"></ul>
+    </div>
+  </section>
+
+  <!-- 交流广场：浏览 / 搜索 / 按热度排序 / 订阅 -->
+  <section id="screen-plaza" class="screen hidden">
+    <header class="practice-head">
+      <button id="btn-plaza-back" class="link">← 返回首页</button>
+      <h2>交流广场</h2>
+      <p class="hint">大家发布的主题词包都在这里。看到喜欢的点「订阅到本机」，它就会出现在你的词包列表里，建房时就能选这套词包开局。</p>
+    </header>
+    <div class="card plaza-toolbar">
+      <div class="row">
+        <input id="plaza-search" type="search" placeholder="搜索名称 / 主题 / 候选词…" maxlength="20" autocomplete="off">
+        <select id="plaza-theme-filter"><option value="">全部主题</option></select>
+      </div>
+      <div class="row">
+        <button id="btn-plaza-sort-hot">按热度</button>
+        <button id="btn-plaza-sort-new">按最新</button>
+        <span class="hint plaza-stats" id="plaza-stats"></span>
+      </div>
+    </div>
+    <ul id="plaza-list" class="practice-list"></ul>
+    <p id="plaza-empty" class="hint hidden">广场上还没有词包。到「我的词包」点「发布到广场」，让你的主题第一个被大家看到。</p>
   </section>
 
   <!-- 战术练习：关卡列表 -->
@@ -434,6 +468,7 @@
 <script src="favorites.js"></script>
 <script src="packs.js"></script>
 <script src="shares.js"></script>
+<script src="plaza.js"></script>
 <script src="achievements.js"></script>
 <script src="client.js"></script>
 </body>
