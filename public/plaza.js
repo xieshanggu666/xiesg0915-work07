@@ -188,14 +188,14 @@
     return arr;
   }
 
-  // 搜索：名称 / 主题 / 发布者 / 预览候选词，大小写不敏感；theme 精确匹配某个主题。
+  // 搜索：名称 / 主题 / 发布者 / 全部候选词，大小写不敏感；theme 精确匹配某个主题。
   function filterPacks(list, opts = {}) {
     const keyword = String(opts.keyword || '').trim().toLowerCase();
     const theme = String(opts.theme || '');
     return (Array.isArray(list) ? list : []).filter(p => {
       if (theme && String(p.theme || '') !== theme) return false;
       if (!keyword) return true;
-      const hay = [p.name, p.theme, p.author, ...(p.preview || p.words || [])]
+      const hay = [p.name, p.theme, p.author, ...(p.words || p.preview || [])]
         .join('\n').toLowerCase();
       return hay.includes(keyword);
     });
@@ -214,8 +214,10 @@
       .map(([t]) => t);
   }
 
-  // 广场列表（公开只读）：不回全文，只回展示所需的摘要与前几个候选词预览；
-  // myPid 用于标出"我发布的"（客户端据此显示下架入口）。按热度截断到 MAX_LIST。
+  // 广场列表（公开只读）：回展示摘要与完整候选词——搜索要覆盖全部候选词，
+  // 且词包内容本就是公开的（任何人订阅即可拿到全文）。预览展示由客户端按
+  // PREVIEW_WORDS 截取。myPid 用于标出"我发布的"（客户端据此显示下架入口）。
+  // 按热度截断到 MAX_LIST。
   function summaries(store, opts = {}) {
     const myPid = isValidPid(opts.myPid) ? opts.myPid : null;
     const list = Object.values(store.packs).map(e => ({
@@ -223,7 +225,7 @@
       name: e.pack.name,
       theme: e.pack.theme,
       wordCount: e.pack.words.length,
-      preview: e.pack.words.slice(0, PREVIEW_WORDS),
+      words: e.pack.words,
       author: e.author,
       subscribers: subscriberCount(e),
       publishedAt: e.publishedAt,

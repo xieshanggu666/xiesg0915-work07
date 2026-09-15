@@ -52,7 +52,9 @@ function client() {
 
 const PACK = { id: 'pk_plaza_e2e', name: '海洋奇缘', theme: '一切都与大海有关',
   words: ['海浪', '贝壳', '灯塔', '海鸥', '帆船', '珊瑚'] };
-const PACK_UPDATED = { ...PACK, theme: '更新后的主题说明', words: ['海浪', '贝壳', '灯塔', '鲸鱼'] };
+// 更新后的词包有 10 个候选词（超过预览个数 8），用于验证列表接口下发完整候选词
+const PACK_UPDATED = { ...PACK, theme: '更新后的主题说明',
+  words: ['海浪', '贝壳', '灯塔', '鲸鱼', '珊瑚', '海鸥', '帆船', '沙滩', '潮汐', '水母'] };
 const PACK2 = { id: 'pk_plaza_e2e_2', name: '校园日常', theme: '学校生活',
   words: ['操场', '粉笔', '课桌', '铃声'] };
 
@@ -103,7 +105,7 @@ async function main() {
   const sub1 = B.msgs.filter(m => m.type === 'plazaPack').at(-1);
   check('订阅返回词包快照与最新热度',
     sub1.id === plazaId && sub1.pack.id === PACK.id &&
-    sub1.pack.theme === '更新后的主题说明' && sub1.pack.words.length === 4 &&
+    sub1.pack.theme === '更新后的主题说明' && sub1.pack.words.length === 10 &&
     sub1.subscribers === 1);
   B.send({ type: 'plazaSubscribe', id: plazaId, pidSecret: SECRET_B });
   await B.waitFor(c => c.msgs.filter(m => m.type === 'plazaPack').length >= 2);
@@ -124,9 +126,10 @@ async function main() {
   check('广场列表按热度排序（2 人订阅的在前）',
     listB.length === 2 && listB[0].id === plazaId && listB[0].subscribers === 2 &&
     listB[1].id === coldId && listB[1].subscribers === 0);
-  check('摘要含预览/作者/词数，不含全文与作者身份',
-    listB[0].preview.length === 4 && listB[0].wordCount === 4 &&
-    listB[0].author === '甲' && !('words' in listB[0]) && !('pid' in listB[0]));
+  check('摘要含完整候选词/作者/词数，不含作者身份',
+    listB[0].words.length === 10 && listB[0].wordCount === 10 &&
+    listB[0].words[9] === '水母' && // 第 8 个之后的候选词也随列表下发（搜索可命中）
+    listB[0].author === '甲' && !('pid' in listB[0]));
   check('别人的条目 mine=false', listB.every(p => p.mine === false));
   A.send({ type: 'plazaList', sort: 'hot', pidSecret: SECRET_A });
   await A.waitFor(c => c.msgs.some(m => m.type === 'plazaList'));

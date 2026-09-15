@@ -2076,7 +2076,10 @@
     }
     listEl.innerHTML = filtered.map(item => {
       const subscribed = store.packs.some(p => p.plazaId === item.id);
-      const more = item.wordCount > item.preview.length ? ' …' : '';
+      // 列表带全部候选词（搜索可命中任意词），展示只取前几个做预览
+      const words = Array.isArray(item.words) ? item.words : [];
+      const preview = words.slice(0, WTPlaza.PREVIEW_WORDS);
+      const more = item.wordCount > preview.length ? ' …' : '';
       return `
       <li>
         <div>
@@ -2086,7 +2089,7 @@
             ${item.mine ? '<span class="badge plaza-mine">我发布的</span>' : ''}
           </div>
           <div class="pl-sub">${item.theme ? esc(item.theme) : '（无主题说明）'}</div>
-          <div class="pl-sub">候选词：${item.preview.map(esc).join('、')}${more}</div>
+          <div class="pl-sub">候选词：${preview.map(esc).join('、')}${more}</div>
           <div class="pl-sub">${item.author ? `发布者：${esc(item.author)} · ` : ''}更新于 ${fmtDate(item.updatedAt)}</div>
         </div>
         <div class="row">
@@ -2214,7 +2217,7 @@
   $('btn-plaza-back').onclick = () => showScreen('home');
   $('btn-plaza-sort-hot').onclick = () => { plazaSort = 'hot'; renderPlaza(); };
   $('btn-plaza-sort-new').onclick = () => { plazaSort = 'new'; renderPlaza(); };
-  // 搜索与主题筛选都是纯前端过滤已拉取的列表，不重发请求
+  // 搜索与主题筛选都是纯前端过滤已拉取的列表（候选词全文随列表下发），不重发请求
   $('plaza-search').addEventListener('input', (e) => { plazaQuery = e.target.value || ''; renderPlaza(); });
   $('plaza-theme-filter').onchange = (e) => { plazaTheme = e.target.value || ''; renderPlaza(); };
 

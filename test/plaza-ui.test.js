@@ -125,14 +125,14 @@ const storedPacks = () => JSON.parse(storage.wt_packs || '[]');
 const storedPlazaMine = () => JSON.parse(storage.wt_plaza_mine || '[]');
 
 const PLAZA_LIST = [
-  { id: 'pz_aaaaaaaaaaa1', name: '海洋奇缘', theme: '与海有关', wordCount: 4,
-    preview: ['海浪', '贝壳', '灯塔', '海鸥'], author: '小词', subscribers: 5,
-    publishedAt: 100, updatedAt: 200, mine: false },
+  { id: 'pz_aaaaaaaaaaa1', name: '海洋奇缘', theme: '与海有关', wordCount: 10,
+    words: ['海浪', '贝壳', '灯塔', '海鸥', '帆船', '珊瑚', '沙滩', '潮汐', '水母', '鲸鱼'],
+    author: '小词', subscribers: 5, publishedAt: 100, updatedAt: 200, mine: false },
   { id: 'pz_bbbbbbbbbbb2', name: '校园日常', theme: '学校生活', wordCount: 3,
-    preview: ['操场', '粉笔', '课桌'], author: '同桌', subscribers: 2,
+    words: ['操场', '粉笔', '课桌'], author: '同桌', subscribers: 2,
     publishedAt: 300, updatedAt: 400, mine: false },
   { id: 'pz_ccccccccccc3', name: '山野漫步', theme: '', wordCount: 3,
-    preview: ['山峰', '山谷', '溪流'], author: '', subscribers: 0,
+    words: ['山峰', '山谷', '溪流'], author: '', subscribers: 0,
     publishedAt: 500, updatedAt: 600, mine: false },
 ];
 
@@ -148,8 +148,11 @@ test('广场：进入即拉取列表，渲染热度/作者/预览，支持排序
   recvMsg({ type: 'plazaList', sort: 'hot', packs: PLAZA_LIST });
   const html = $('plaza-list').innerHTML;
   assert.ok(html.includes('海洋奇缘') && html.includes('🔥 5 人订阅'), '展示名称与热度');
+  assert.ok(html.includes('10 词'), '展示词数');
   assert.ok(html.includes('发布者：小词'), '展示发布者');
   assert.ok(html.includes('海浪、贝壳、灯塔、海鸥'), '展示候选词预览');
+  assert.ok(html.includes('沙滩、潮汐 …'), '预览只展示前 8 个词并带省略标记');
+  assert.ok(!html.includes('水母'), '第 8 个之后的候选词不直接展示');
   assert.ok(html.includes('（无主题说明）'), '无主题兜底');
   assert.ok(html.indexOf('海洋奇缘') < html.indexOf('校园日常'), '按热度排序（订阅多的在前）');
   assert.ok($('plaza-stats').textContent.includes('共 3 个词包'));
@@ -169,11 +172,15 @@ test('广场：进入即拉取列表，渲染热度/作者/预览，支持排序
   themeSel.value = '';
   themeSel.onchange({ target: themeSel });
 
-  // 搜索：命中预览词；无命中时提示并回显搜索词
+  // 搜索：命中预览词；也能命中第 8 个之后的候选词（回归：搜索覆盖全部候选词）
   $('plaza-search').value = '粉笔';
   $('plaza-search').dispatch('input');
   assert.ok($('plaza-list').innerHTML.includes('校园日常'));
   assert.ok(!$('plaza-list').innerHTML.includes('海洋奇缘'));
+  $('plaza-search').value = '水母';
+  $('plaza-search').dispatch('input');
+  assert.ok($('plaza-list').innerHTML.includes('海洋奇缘'), '第 9 个候选词也能搜到');
+  assert.ok(!$('plaza-list').innerHTML.includes('校园日常'));
   $('plaza-search').value = '不存在的词';
   $('plaza-search').dispatch('input');
   assert.ok($('plaza-list').innerHTML.includes('没有符合条件的词包'));

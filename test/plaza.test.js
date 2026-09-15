@@ -168,22 +168,23 @@ test('summaries：摘要不含全文、带预览与 mine 标记；hot/new 排序
   assert.strictEqual(list[0].subscribers, 2);
   assert.strictEqual(list[0].mine, false);
   assert.strictEqual(list[1].mine, true, 'myPid 标出自己的发布');
-  assert.deepStrictEqual(list[0].preview, ['海浪', '贝壳', '灯塔']);
+  assert.deepStrictEqual(list[0].words, ['海浪', '贝壳', '灯塔'], '列表带完整候选词');
   assert.strictEqual(list[1].wordCount, 4);
-  assert.ok(!('words' in list[0]), '摘要不回全文');
   assert.ok(!('pid' in list[0]), '摘要不暴露作者身份');
 
   const byNew = P.summaries(store, { sort: 'new' });
   assert.strictEqual(byNew[0].id, cold.id, '最新发布在前');
 
-  // 预览最多 PREVIEW_WORDS 个词
+  // 候选词全文随列表下发（搜索要覆盖全部候选词，不只前几个预览词）
   const many = P.emptyPlaza();
   P.publish(many, {
     pid: PID_A, packId: 'pk_many',
     pack: validPack({ words: Array.from({ length: 20 }, (_, i) => `词${i}`) }),
     now: 1, generate: genFrom(['pz_aaaaaaaaaaa9']),
   });
-  assert.strictEqual(P.summaries(many, {})[0].preview.length, P.PREVIEW_WORDS);
+  const manyList = P.summaries(many, {});
+  assert.strictEqual(manyList[0].words.length, 20, '超过预览个数的候选词也完整下发');
+  assert.strictEqual(manyList[0].wordCount, 20);
 
   // MAX_LIST 截断（用不同发布者绕过每人上限）
   const big = P.emptyPlaza();
@@ -198,9 +199,11 @@ test('summaries：摘要不含全文、带预览与 mine 标记；hot/new 排序
 
 test('sortPacks / filterPacks / themesOf：热度排序、关键词与主题筛选、主题列表', () => {
   const list = [
-    { id: 'pz_000000000001', name: '海洋', theme: '与海有关', author: '甲', preview: ['海浪'], subscribers: 5, updatedAt: 100 },
-    { id: 'pz_000000000002', name: '校园', theme: '学校生活', author: '乙', preview: ['操场'], subscribers: 6, updatedAt: 300 },
-    { id: 'pz_000000000003', name: '山野', theme: '', author: '丙', preview: ['山峰'], subscribers: 1, updatedAt: 200 },
+    { id: 'pz_000000000001', name: '海洋', theme: '与海有关', author: '甲',
+      words: ['海浪', '贝壳', '灯塔', '海鸥', '帆船', '珊瑚', '沙滩', '潮汐', '水母', '鲸鱼'],
+      subscribers: 5, updatedAt: 100 },
+    { id: 'pz_000000000002', name: '校园', theme: '学校生活', author: '乙', words: ['操场'], subscribers: 6, updatedAt: 300 },
+    { id: 'pz_000000000003', name: '山野', theme: '', author: '丙', words: ['山峰'], subscribers: 1, updatedAt: 200 },
   ];
   // hot：同热度按更新时间
   assert.deepStrictEqual(P.sortPacks(list, 'hot').map(x => x.id),
@@ -211,10 +214,13 @@ test('sortPacks / filterPacks / themesOf：热度排序、关键词与主题筛�
   // 原数组不被改写
   assert.strictEqual(list[0].id, 'pz_000000000001');
 
-  // 关键词：命中名称/主题/预览词，大小写不敏感
+  // 关键词：命中名称/主题/候选词，大小写不敏感
   assert.strictEqual(P.filterPacks(list, { keyword: '海洋' }).length, 1);
   assert.strictEqual(P.filterPacks(list, { keyword: '学校' }).length, 1);
   assert.strictEqual(P.filterPacks(list, { keyword: '山峰' }).length, 1);
+  // 回归：候选词搜索覆盖全部词，不只前几个预览词（第 9、10 个词也要命中）
+  assert.deepStrictEqual(P.filterPacks(list, { keyword: '水母' }).map(x => x.id), ['pz_000000000001']);
+  assert.deepStrictEqual(P.filterPacks(list, { keyword: '鲸鱼' }).map(x => x.id), ['pz_000000000001']);
   assert.strictEqual(P.filterPacks(list, { keyword: '不存在' }).length, 0);
   assert.strictEqual(P.filterPacks(list, { keyword: '  ' }).length, 3, '空白关键词不过滤');
   // 主题筛选：精确匹配；与关键词可叠加
